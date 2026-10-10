@@ -309,6 +309,16 @@ export class VlsManager implements vscode.Disposable {
 		}
 	}
 
+	/** Whether a server is actually running.
+	 *
+	 * A client that exists is not necessarily running: it can be starting, or
+	 * stopping. Consumers ask this to defer to the server rather than duplicate
+	 * it, so the answer has to mean "it can answer a request now".
+	 */
+	isRunning(): boolean {
+		return this.client?.state === State.Running
+	}
+
 	private scheduleRecovery(failedClient: LanguageClient, reason: string): void {
 		if (this.disposed || this.client !== failedClient || this.recoveryTimer) return
 		vlsOutputChannel.warn(`VLS disconnected: ${reason}. Scheduling recovery.`)

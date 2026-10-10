@@ -15,6 +15,12 @@ type CodeLensProvider = {
 		getText(): string
 	}): unknown
 }
+type FormattingProvider = {
+	provideDocumentFormattingEdits(document: {
+		getText(): string
+		positionAt(offset: number): unknown
+	}): unknown
+}
 type StatusBarItem = {
 	text: string
 	tooltip: string | undefined
@@ -36,6 +42,7 @@ export const state = {
 	logs: [] as string[],
 	foldingRanges: [] as FoldingProvider[],
 	codeLenses: [] as CodeLensProvider[],
+	formattingProviders: [] as FormattingProvider[],
 	statusBarItems: [] as StatusBarItem[],
 	promptResponse: "Later" as string | undefined,
 	prompts: 0,
@@ -50,6 +57,7 @@ export function resetVscode(): void {
 	state.logs.length = 0
 	state.foldingRanges.length = 0
 	state.codeLenses.length = 0
+	state.formattingProviders.length = 0
 	state.statusBarItems.length = 0
 	state.promptResponse = "Later"
 	state.prompts = 0
@@ -154,6 +162,10 @@ export const languages = {
 	},
 	registerCodeLensProvider(_selector: unknown, provider: CodeLensProvider) {
 		state.codeLenses.push(provider)
+		return { dispose: () => undefined }
+	},
+	registerDocumentFormattingEditProvider(_selector: unknown, provider: FormattingProvider) {
+		state.formattingProviders.push(provider)
 		return { dispose: () => undefined }
 	},
 }

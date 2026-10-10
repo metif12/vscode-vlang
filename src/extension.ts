@@ -2,6 +2,7 @@ import { registerCommands, registerNumberHover, registerVlsCommands } from "comm
 import { registerCodeActions } from "./codeActions"
 import { registerDebugger } from "./debugger"
 import { registerFolding } from "./folding"
+import { registerDocumentFormatting } from "./formatProvider"
 import { isVlsEnabled, VlsManager } from "langserver"
 import { registerStatusBar } from "./statusBar"
 import { registerSelectExecutable } from "./selectExecutable"
@@ -40,6 +41,10 @@ export async function activate(context: ExtensionContext): Promise<void> {
 	registerTestGutter(context, taskManager)
 	registerStatusBar(context)
 	registerSelectExecutable(context)
+	// Formatting with the configured compiler, which defers to VLS while the
+	// server is up and answers when it is not. The server check reads `vlsManager`
+	// lazily because the manager is constructed further down.
+	registerDocumentFormatting(context, () => vlsManager?.isRunning() ?? false)
 
 	// Own the managed V and VLS builds and their update checks. Its constructor
 	// calls initializeManagedTools, so a managed executable is preferred over PATH
