@@ -7,26 +7,14 @@ import {
 	State,
 } from "vscode-languageclient/node"
 import { vlsOutputChannel } from "./logger"
+import { vDocumentSelector } from "./documentSelector"
 import { effectiveToolSetting, managedToolExecutable } from "./managedTools"
+import { requiresServerRestart } from "./serverRestart"
 import { migratedSetting } from "./settings"
 import { resolvedCommand } from "./vCommand"
 import { runCodeLensCommand, VTaskManager, vCommandForServer } from "./vTasks"
 import type { ToolName } from "./toolInstallation"
 import { requireSupportedVls, UnsupportedVlsError } from "./vlsSupport"
-
-const serverSettings = [
-	"v.vls.enable",
-	"v.vls.command",
-	"v.vls.args",
-	"v.executablePath",
-	"v.vls.inlayHints.enabled",
-	"v.vls.diagnostics",
-	"vls.command",
-	"vls.args",
-	"vls.vCommand",
-	"vls.inlayHints.enabled",
-	"vls.diagnostics.enabled",
-]
 
 function featureEnabled(feature: "inlayHints.enabled" | "diagnostics"): boolean {
 	return migratedSetting(
@@ -93,10 +81,7 @@ export class VlsManager implements vscode.Disposable {
 				if (state.focused) this.checkReplacedTools()
 			}),
 			vscode.workspace.onDidChangeConfiguration((event) => {
-				if (
-					!this.updatingConfiguration &&
-					serverSettings.some((setting) => event.affectsConfiguration(setting))
-				) {
+				if (!this.updatingConfiguration && requiresServerRestart(event)) {
 					void this.restart()
 				}
 			}),
@@ -232,7 +217,7 @@ export class VlsManager implements vscode.Disposable {
 		)
 		this.notifiedReplacement = false
 		const options: LanguageClientOptions = {
-			documentSelector: [{ scheme: "file", language: "v" }],
+			documentSelector: [...vDocumentSelector],
 			outputChannel: vlsOutputChannel,
 			// Configuration changes restart the client through our queue. Send settings
 			// after startup only; an independent synchronizer can race the old shutdown.
