@@ -43,6 +43,15 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Do not persist the `contents: write` token in `.git/config`:
+          # `npm ci`, the tests, and the build below execute dependency and
+          # repo code that could read it there and push commits or cut
+          # releases with it. Steps that need the API (`gh ...`) pass
+          # `github.token` explicitly via `GH_TOKEN` instead; nothing below
+          # performs an authenticated git operation (the tag SHA lookup is a
+          # local `git rev-list`, the master check is a `gh api` call).
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
@@ -130,14 +139,26 @@ jobs:
         run: |
           # The tag may arrive with no release yet (a maintainer pushed it), or
           # with one already created on GitHub by tagging a release. Both land
-          # the same way: create if absent, then upload. Pre-release tags
-          # (e.g. 0.2.1-rc.1) create a GitHub pre-release to match the
-          # pre-release-marked VSIX.
+          # the same way: create if absent, reconcile if present, then upload.
+          # Pre-release tags (e.g. 0.2.1-rc.1) need a GitHub pre-release to
+          # match the pre-release-marked VSIX.
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             if [ -n "$PRE_RELEASE" ]; then
               gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --prerelease
             else
               gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+            fi
+          else
+            # The release was created beforehand (e.g. drafted on GitHub
+            # before the tag was pushed) and may carry the wrong status: a
+            # pre-created stable release would stay stable under a
+            # pre-release tag even though the VSIX is pre-release-marked
+            # (and vice versa). Verify before uploading and fix a mismatch.
+            is_prerelease="$(gh release view "$GITHUB_REF_NAME" --json isPrerelease --jq '.isPrerelease')"
+            if [ -n "$PRE_RELEASE" ] && [ "$is_prerelease" != "true" ]; then
+              gh release edit "$GITHUB_REF_NAME" --prerelease
+            elif [ -z "$PRE_RELEASE" ] && [ "$is_prerelease" = "true" ]; then
+              gh release edit "$GITHUB_REF_NAME" --prerelease=false
             fi
           fi
           gh release upload "$GITHUB_REF_NAME" ./*.vsix --clobber
