@@ -106,12 +106,26 @@ View.tokens { color: var(--brand); background: var(--ink, #172033); }
 //                                 ^^^^^^^^^^ support.type.property-name.vss
 //                                                 ^^^^^ variable.other.vss
 //                                                        ^^^^^^^ constant.numeric.color.hex.vss - entity.other.attribute-name.id.vss
-View.still { transition-duration: 1px; animation-name: white; }
+View.still { transition-duration: 0.2s; animation-name: fade; }
 //<---- entity.name.tag.vss
 //  ^^^^^ entity.other.attribute-name.class.vss
-//           ^^^^^^^^^^^^^^^^^^^ - support.type.property-name.vss
-//                                ^^^ constant.numeric.vss
-//                                     ^^^^^^^^^^^^^^ - support.type.property-name.vss
+//           ^^^^^^^^^^^^^^^^^^^ support.type.property-name.vss
+//                                ^^^^ constant.numeric.vss
+//                                      ^^^^^^^^^^^^^^ support.type.property-name.vss
+* { color: white; }
+//<- entity.other.attribute-name.universal.vss
+//  ^^^^^ support.type.property-name.vss
+View.fade { transition-delay: 150ms; }
+//<---- entity.name.tag.vss
+//  ^^^^^ entity.other.attribute-name.class.vss
+//          ^^^^^^^^^^^^^^^^ support.type.property-name.vss
+//                            ^^^^^ constant.numeric.vss
+Button {} @dark-only { Button { background: #111111; } }
+//<------ entity.name.tag.vss
+//        ^^^^^^^^^^ keyword.control.at-rule.vss - variable.other.vss
+//                     ^^^^^^ entity.name.tag.vss
+//                              ^^^^^^^^^^ support.type.property-name.vss
+//                                          ^^^^^^^ constant.numeric.color.hex.vss - entity.other.attribute-name.id.vss
 #main { color: white; }
 //<----- entity.other.attribute-name.id.vss
 //      ^^^^^ support.type.property-name.vss
