@@ -1,4 +1,4 @@
-# Expected output for scripts/verify-dap.sh
+# Expected output for scripts/verify-dap.mjs
 
 On a host whose gdb lacks DAP/Python (e.g. this host's gdb 17.1), the script
 exits non-zero at preflight and prints exactly:

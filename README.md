@@ -358,7 +358,7 @@ a local VS Code test build if `CODE_EXECUTABLE` is unset. Set `VLS_BINARY` and
 `TEST_PACKAGED=1` when running `npm run test:vscode` to install and test the
 VSIX in an isolated VS Code profile.
 
-DAP live verification runs in CI; locally it requires gdb >= 13 with Python.
+DAP live verification (`node scripts/verify-dap.mjs`) runs in CI; locally it requires gdb >= 13 with Python.
 
 ## Debugging
 

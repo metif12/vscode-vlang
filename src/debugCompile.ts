@@ -395,7 +395,7 @@ export function preflightGdb(input?: unknown): GdbPreflightResult {
 		!/Interpreter `dap' unrecognized/i.test(text) &&
 		!/Could not find interpreter "dap"/i.test(text) &&
 		!/unrecognized/i.test(text) &&
-		(exitCode === 0 || /ok/i.test(text))
+		exitCode === 0
 	const verNum = parseFloat(version || "0")
 	const coreFileDap = verNum >= 18
 	if (hasPython && hasDap && verNum >= 13) {
@@ -447,6 +447,21 @@ export function gdbSetupCommandToCli(text: string): string {
 		return `interpreter-exec mi "${trimmed.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 	}
 	return text
+}
+
+/** Quote one CLI argument for `gdb -iex` / lldb `initCommands`.
+ *
+ * Backslashes become forward slashes first (so a Windows path needs no
+ * escaping beyond quotes), then the result is double-quoted — with inner
+ * quotes escaped — only when it contains whitespace or a quote. Plain
+ * paths pass through untouched, keeping `-iex` lines readable.
+ */
+export function quoteCliArgument(value: string): string {
+	const normalized = value.replace(/\\/g, "/")
+	if (/[\s"]/.test(normalized)) {
+		return `"${normalized.replace(/"/g, '\\"')}"`
+	}
+	return normalized
 }
 
 /** Whether a launch value is an unsubstituted `${command:...}` reference.
@@ -628,7 +643,7 @@ export function lldbDapFields(input: {
 		preRunCommands: (input.setupCommands ?? []).map((command) => command.text),
 		initCommands:
 			input.usePrettyPrinters !== false && input.formattersPath
-				? [`command script import ${input.formattersPath}`]
+				? [`command script import ${quoteCliArgument(input.formattersPath)}`]
 				: [],
 	}
 }

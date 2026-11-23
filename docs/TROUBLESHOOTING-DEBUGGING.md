@@ -66,7 +66,9 @@ With the built-in adapters, `"miDebuggerServerAddress"` alone is
 enough to attach: no `processId` or `coreFile` is required, and when a
 remote target and a PID are both set the target wins (GDB DAP would
 otherwise attach locally and ignore the remote). The `cppdbg` fallback
-still needs a `processId`.
+still needs a `processId`. With `pipeTransport` the local debugger check
+is skipped — only `pipeProgram` is resolved locally and the remote
+`debuggerPath` is used verbatim.
 
 ## Core-file attach
 

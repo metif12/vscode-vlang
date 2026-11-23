@@ -21,6 +21,7 @@ import {
 	parseGdbVersion,
 	pipeTransportArgs,
 	preflightGdb,
+	quoteCliArgument,
 	resolveDebuggerCommand,
 	vPrintersPath,
 	withEnvFileEntries,
@@ -702,6 +703,33 @@ describe("V debug compile", () => {
 				pipeTransportArgs({ pipeProgram: "ssh", debuggerPath: "/usr/bin/lldb-dap" }),
 				["/usr/bin/lldb-dap"],
 			)
+		})
+	})
+
+	describe("probe exit codes and CLI quoting", () => {
+		it("rejects a DAP-capable-looking probe that exited non-zero", () => {
+			// The production probe combines all three probe outputs, so the
+			// passing Python probe's `ok` used to satisfy a failed DAP probe.
+			const result = preflightGdb({ output: "GNU gdb (GDB) 18.1\nok\n", exitCode: 1 })
+			assert.strictEqual(result.adapter, null)
+		})
+
+		it("quotes CLI arguments only when needed", () => {
+			assert.strictEqual(
+				quoteCliArgument("C:\\vscode ext\\printers\\a.py"),
+				'"C:/vscode ext/printers/a.py"',
+			)
+			assert.strictEqual(quoteCliArgument("/a b/c"), '"/a b/c"')
+			assert.strictEqual(quoteCliArgument("/usr/bin/gdb"), "/usr/bin/gdb")
+			assert.strictEqual(quoteCliArgument('a"b'), '"a\\"b"')
+		})
+
+		it("quotes a spaced lldb formatters path on import", () => {
+			assert.deepStrictEqual(lldbDapFields({ formattersPath: "/a b/v_formatters.py" }), {
+				stopOnEntry: false,
+				preRunCommands: [],
+				initCommands: ['command script import "/a b/v_formatters.py"'],
+			})
 		})
 	})
 })

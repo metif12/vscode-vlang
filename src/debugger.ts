@@ -21,6 +21,7 @@ import {
 	parseEnvFile,
 	preflightGdb,
 	pipeTransportArgs,
+	quoteCliArgument,
 	resolveDebuggerCommand,
 	vPrintersPath,
 	type CppdbgEnvironmentEntry,
@@ -111,9 +112,47 @@ async function selectAdapter(
 	miMode: VDebuggerMode,
 	debuggerPath: string,
 	workspaceFolder?: string,
+	options?: { pipeTransport?: boolean },
 ): Promise<AdapterSelection | undefined> {
 	const configured = vscode.workspace.getConfiguration("v").get<string>("debug.adapter", "auto")
 	const hasCppdbg = !!vscode.extensions.getExtension(cppdbgExtensionId)
+	if (options?.pipeTransport) {
+		// A remote pipe is unprobable: the remote `debuggerPath` is never
+		// resolved against the local PATH, so no probe may run against it.
+		// Explicit `cppdbg`/`gdb-dap` are honored without probing (cppdbg
+		// still needs the extension); lldb mode serves `lldb-dap` without
+		// a local binary check; `auto` prefers cppdbg when installed, else
+		// the remote gdb DAP with core-file attach gated off.
+		if (configured === "cppdbg") {
+			if (!hasCppdbg) {
+				void vscode.window.showErrorMessage(missingCppdbgMessage())
+				return undefined
+			}
+			return { adapter: "cppdbg", coreFileDap: false }
+		}
+		if (miMode === "lldb") {
+			if (configured === "gdb-dap") {
+				void vscode.window.showErrorMessage(
+					'Cannot debug: v.debug.adapter is "gdb-dap" but MIMode is "lldb". Use "lldb-dap" or "auto".',
+				)
+				return undefined
+			}
+			return { adapter: "lldb-dap", coreFileDap: false }
+		}
+		if (configured === "lldb-dap") {
+			void vscode.window.showErrorMessage(
+				'Cannot debug: v.debug.adapter is "lldb-dap" but MIMode is "gdb". Use "gdb-dap" or "auto".',
+			)
+			return undefined
+		}
+		if (configured === "gdb-dap") {
+			return { adapter: "gdb-dap", coreFileDap: false }
+		}
+		if (hasCppdbg) {
+			return { adapter: "cppdbg", coreFileDap: false }
+		}
+		return { adapter: "gdb-dap", coreFileDap: false }
+	}
 	if (configured === "cppdbg") {
 		if (!hasCppdbg) {
 			void vscode.window.showErrorMessage(missingCppdbgMessage())
@@ -173,7 +212,7 @@ async function selectAdapter(
 
 /** Probe a gdb binary for DAP capability without starting a session.
  *
- * Runs the same three checks `scripts/verify-dap.sh` gates CI on (version,
+ * Runs the same three checks `scripts/verify-dap.mjs` gates CI on (version,
  * Python support, the `dap` interpreter) and feeds the combined output to
  * `preflightGdb`, so the provider and the script agree on what counts as
  * DAP-capable. Probe exit codes are preserved: a failed probe must not be
@@ -194,7 +233,7 @@ async function probeGdbCapability(gdbPath: string): Promise<GdbPreflightResult> 
 /** Run one gdb probe, folding spawn failures into text the preflight parser reads. */
 function runProbe(gdbPath: string, args: string[]): Promise<{ output: string; exitCode: number }> {
 	return new Promise((resolve) => {
-		// `stdio: "ignore"` for stdin mirrors the `</dev/null` the verify
+		// `stdio: "ignore"` for stdin mirrors the ignored stdin the verify
 		// script uses: `gdb -i=dap --batch` must see EOF, not a held pipe.
 		const child = _spawn(gdbPath, args, { stdio: ["ignore", "pipe", "pipe"] })
 		let stdout = ""
@@ -249,22 +288,58 @@ export class VDebugConfigurationProvider implements vscode.DebugConfigurationPro
 		const workspaceFolder =
 			folder ?? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(vConfiguration.program))
 		const miMode = vConfiguration.MIMode === "lldb" ? "lldb" : "gdb"
-		const debuggerCommand = resolveDebuggerCommand(
-			vConfiguration.miDebuggerPath,
-			miMode,
-			workspaceFolder?.uri.fsPath,
-		)
-		const debuggerPath = resolvedCommand(debuggerCommand, workspaceFolder?.uri.fsPath)
-		if (!debuggerPath) {
-			const configured = (vConfiguration.miDebuggerPath ?? "").trim()
-			void vscode.window.showErrorMessage(
-				configured
-					? `Cannot debug: debugger not found: ${debuggerCommand}. Check miDebuggerPath.`
-					: missingDebuggerMessage(process.platform, miMode),
+		// A remote-only `pipeTransport` config has no local debugger, so the
+		// pipe validates first and never reaches the local check below. Only
+		// `pipeProgram` (`ssh`, ...) is resolved locally; the configured
+		// local path is used when given, else the remote `debuggerPath` goes
+		// verbatim as `miDebuggerPath` without a local existence check.
+		const pipeTransport = vConfiguration.pipeTransport
+		let debuggerPath: string
+		let pipeMode = false
+		if (pipeTransport) {
+			const pipeProgram = (pipeTransport.pipeProgram ?? "").trim()
+			const remoteDebuggerPath = (pipeTransport.debuggerPath ?? "").trim()
+			if (!pipeProgram || !remoteDebuggerPath) {
+				void vscode.window.showErrorMessage(
+					"Cannot debug: pipeTransport needs both pipeProgram and debuggerPath.",
+				)
+				return undefined
+			}
+			if (!resolvedCommand(pipeProgram, workspaceFolder?.uri.fsPath)) {
+				void vscode.window.showErrorMessage(
+					`Cannot debug: pipe program not found: ${pipeProgram}. Check pipeTransport.pipeProgram.`,
+				)
+				return undefined
+			}
+			pipeMode = true
+			debuggerPath = (vConfiguration.miDebuggerPath ?? "").trim()
+				? resolveDebuggerCommand(
+						vConfiguration.miDebuggerPath,
+						miMode,
+						workspaceFolder?.uri.fsPath,
+					)
+				: remoteDebuggerPath
+		} else {
+			const debuggerCommand = resolveDebuggerCommand(
+				vConfiguration.miDebuggerPath,
+				miMode,
+				workspaceFolder?.uri.fsPath,
 			)
-			return undefined
+			const resolved = resolvedCommand(debuggerCommand, workspaceFolder?.uri.fsPath)
+			if (!resolved) {
+				const configured = (vConfiguration.miDebuggerPath ?? "").trim()
+				void vscode.window.showErrorMessage(
+					configured
+						? `Cannot debug: debugger not found: ${debuggerCommand}. Check miDebuggerPath.`
+						: missingDebuggerMessage(process.platform, miMode),
+				)
+				return undefined
+			}
+			debuggerPath = resolved
 		}
-		const selection = await selectAdapter(miMode, debuggerPath, workspaceFolder?.uri.fsPath)
+		const selection = await selectAdapter(miMode, debuggerPath, workspaceFolder?.uri.fsPath, {
+			pipeTransport: pipeMode,
+		})
 		if (!selection) {
 			return undefined
 		}
@@ -287,12 +362,22 @@ export class VDebugConfigurationProvider implements vscode.DebugConfigurationPro
 			// file or target is treated as absent (no pick, no PID).
 			const coreFile = (vConfiguration.coreFile ?? "").trim() || undefined
 			const target = (vConfiguration.miDebuggerServerAddress ?? "").trim() || undefined
-			let processId = vConfiguration.processId
+			let processId = (vConfiguration.processId ?? "").trim() || undefined
 			if (processId && shouldSkipProcessPicker({ processId, coreFile, target })) {
 				processId = undefined
 			} else if (processId && isCommandReference(processId)) {
 				// Variable substitution has not run yet, so the built-in
 				// adapter cannot defer to a picker command: run ours now.
+				const picked = await pickProcess()
+				if (!picked) {
+					return undefined
+				}
+				processId = picked
+			} else if (!processId && !coreFile && !target) {
+				// A hand-written config without `processId` (and without a
+				// core file or remote target) gets the picker too: only a
+				// command reference opened it before, the rest fell through
+				// to the "attach needs a processId" error below.
 				const picked = await pickProcess()
 				if (!picked) {
 					return undefined
@@ -600,16 +685,10 @@ class VDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFac
 		const config = session.configuration as VDebugConfiguration
 		const miMode = config.MIMode === "lldb" ? "lldb" : "gdb"
 		const folder = vscode.workspace.workspaceFolders?.[0]
-		const debuggerCommand = resolveDebuggerCommand(
-			config.miDebuggerPath,
-			miMode,
-			folder?.uri.fsPath,
-		)
-		const debuggerPath = resolvedCommand(debuggerCommand, folder?.uri.fsPath)
-		if (!debuggerPath) {
-			return undefined
-		}
 		if (config.pipeTransport) {
+			// The pipe resolves before the local debugger below: a
+			// remote-only session has no local debugger to resolve, and
+			// resolving it here would kill the session before the pipe runs.
 			const pt = config.pipeTransport
 			const pipePath = resolvedCommand(pt.pipeProgram, folder?.uri.fsPath)
 			if (!pipePath || !pt.debuggerPath.trim()) {
@@ -631,6 +710,15 @@ class VDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFac
 				pt.pipeCwd ? { cwd: pt.pipeCwd } : undefined,
 			)
 		}
+		const debuggerCommand = resolveDebuggerCommand(
+			config.miDebuggerPath,
+			miMode,
+			folder?.uri.fsPath,
+		)
+		const debuggerPath = resolvedCommand(debuggerCommand, folder?.uri.fsPath)
+		if (!debuggerPath) {
+			return undefined
+		}
 		if (miMode === "lldb") {
 			const lldbDap =
 				resolvedCommand("lldb-dap", folder?.uri.fsPath) ||
@@ -645,13 +733,15 @@ class VDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFac
 			.get("debug.usePrettyPrinters", true)
 		const args = ["-i=dap"]
 		if (usePrinters) {
-			const printers = vPrintersPath(__dirname).replace(/\\/g, "/")
-			args.push("-iex", `source ${printers}`)
+			args.push("-iex", `source ${quoteCliArgument(vPrintersPath(__dirname))}`)
 			// gdb >= 13 required; older gdb may parse -iex differently under DAP.
 		}
 		const sessionConfig = session.configuration as VDebugConfiguration
 		for (const [from, to] of Object.entries(sessionConfig.sourceFileMap ?? {})) {
-			args.push("-iex", `set substitute-path ${from} ${to}`)
+			args.push(
+				"-iex",
+				`set substitute-path ${quoteCliArgument(from)} ${quoteCliArgument(to)}`,
+			)
 		}
 		// `setupCommands` are documented as MI commands; `gdb -iex` expects
 		// CLI, so known MI shapes translate (the pretty-printer enablement

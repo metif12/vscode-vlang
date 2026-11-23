@@ -1,4 +1,4 @@
-// Live DAP checks for scripts/verify-dap.sh.
+// Live DAP checks for scripts/verify-dap.mjs.
 //
 // Speaks Debug Adapter Protocol to `gdb -i=dap` over stdio and exercises the
 // paths the V extension's built-in adapter uses: launch with the printers

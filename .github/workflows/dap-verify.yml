@@ -38,8 +38,8 @@ jobs:
       - name: Logic tests
         run: npm run test:logic
 
-      - name: Run verify-dap.sh
-        run: bash scripts/verify-dap.sh
+      - name: Run verify-dap.mjs
+        run: node scripts/verify-dap.mjs
 
       - name: Upload log on failure
         if: failure()
