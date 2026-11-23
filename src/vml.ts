@@ -224,7 +224,8 @@ function findMatchingBrace(text: string, openIndex: number): number {
 	return -1
 }
 
-const propKeyPattern = /^(@?[A-Za-z_][A-Za-z0-9_.-]*)\s*:/
+const propKeyPattern =
+	/^(@[A-Za-z_][A-Za-z0-9_.-]*|--[A-Za-z_][A-Za-z0-9_.-]*|[A-Za-z_][A-Za-z0-9_.-]*)\s*:/
 
 /**
  * Split one line into generic `key: value` segments. Any key matches (no
@@ -855,6 +856,21 @@ function parseBody(
 				break
 			}
 			const inner = body.slice(braceOpen + 1, braceClose)
+			if (header === "light" || header === "dark") {
+				// VSS theme blocks hold only `@var`/`--var` definitions
+				// (anything else is rejected by the runtime parser). They
+				// land in the props map in document order so `varsFromProps`
+				// picks them up exactly like directly-authored variables;
+				// later definitions win, mirroring the cascade merge. The
+				// hover is theme-agnostic, so both themes feed one scope.
+				for (const [key, value] of Object.entries(parseDeclarations(inner))) {
+					if ((key.startsWith("@") || key.startsWith("--")) && value !== "") {
+						props[key] = value
+					}
+				}
+				index = braceClose + 1
+				continue
+			}
 			const condition = atRuleCondition(header)
 			if (condition !== undefined) {
 				rules.push(...parseAtInner(full, inner, bodyOffset + braceOpen + 1, condition))
@@ -911,11 +927,11 @@ function appendEmbeddedRules(node: VmlNode, rules: VmlStyleRule[]): void {
 	node.props.__rules = JSON.stringify([...existing, ...rules])
 }
 
-/** `@var` definitions held directly in a props map (values unquoted). */
+/** `@var` and `--var` (custom property) definitions held in a props map. */
 function varsFromProps(props: Record<string, string>): Record<string, string> {
 	const vars: Record<string, string> = {}
 	for (const [key, value] of Object.entries(props)) {
-		if (key.startsWith("@") && key.length > 1) {
+		if ((key.startsWith("@") || key.startsWith("--")) && key.length > 1) {
 			vars[key] = unquote(value)
 		}
 	}
@@ -1077,8 +1093,8 @@ export function parseVml(text: string): VmlNode[] {
 		const header = (blockMatch?.[1] ?? "").trim()
 		const topCondition = blockMatch ? atRuleCondition(header) : undefined
 		if (!blockMatch || (topCondition === undefined && /:\s/.test(header))) {
-			// A top-level `@var: value;` definition (no owning block).
-			const varMatch = rest.match(/^(@[A-Za-z_][A-Za-z0-9_.-]*)\s*:\s*([^\n;{}]+);?/)
+			// A top-level `@var: value;` or `--var: value;` definition (no owning block).
+			const varMatch = rest.match(/^((?:@|--)[A-Za-z_][A-Za-z0-9_.-]*)\s*:\s*([^\n;{}]+);?/)
 			if (varMatch?.[1] && varMatch?.[2] !== undefined) {
 				globalVars[varMatch[1]] = unquote(varMatch[2] ?? "")
 				index += varMatch[0].length
@@ -1093,6 +1109,17 @@ export function parseVml(text: string): VmlNode[] {
 			break
 		}
 		const inner = clean.slice(braceOpen + 1, braceClose)
+		if (header === "light" || header === "dark") {
+			// Top-level VSS theme variables feed every block, in document
+			// order like the other globals.
+			for (const [key, value] of Object.entries(parseDeclarations(inner))) {
+				if ((key.startsWith("@") || key.startsWith("--")) && value !== "") {
+					globalVars[key] = unquote(value)
+				}
+			}
+			index = braceClose + 1
+			continue
+		}
 		const condition = atRuleCondition(header)
 		if (condition !== undefined) {
 			globals.push(...parseAtInner(clean, inner, braceOpen + 1, condition))
@@ -1230,6 +1257,75 @@ function nodeId(node: VmlNode): string {
 	return unquote(node.props["id"] ?? "").trim()
 }
 
+/**
+ * VML tag to UI2 element kind. Stylesheet type selectors match the runtime
+ * element kind (`el.kind.str()`), not the VML tag: `view { … }` applies to
+ * a `Rectangle`, while a `Rectangle { … }` rule never matches anything.
+ * Layouts and composite widgets resolve to `view`, mirroring `vml.v`,
+ * whose `else` branch builds unknown tags as views and whose layout and
+ * dialog arms return views or view-based composites.
+ */
+const vmlTagKinds: Record<string, string> = {
+	screen: "screen",
+	column: "view",
+	row: "view",
+	boxlayout: "view",
+	floatlayout: "view",
+	relativelayout: "view",
+	grid: "view",
+	anchorlayout: "view",
+	stacklayout: "view",
+	pagelayout: "view",
+	tabbedpanel: "view",
+	accordion: "view",
+	treeview: "view",
+	screenmanager: "view",
+	carousel: "view",
+	modalview: "view",
+	popup: "view",
+	scroll: "scroll",
+	safearea: "view",
+	safeviewport: "view",
+	view: "view",
+	rectangle: "view",
+	label: "label",
+	icon: "label",
+	image: "image",
+	card: "view",
+	divider: "view",
+	chip: "button",
+	badge: "view",
+	floatingactionbutton: "button",
+	appbar: "view",
+	snackbar: "view",
+	iconbutton: "button",
+	radio: "button",
+	spacer: "view",
+	alertdialog: "view",
+	bottomsheet: "view",
+	bottomnavigationbar: "view",
+	drawer: "view",
+	listtile: "view",
+	scaffold: "view",
+	progressbar: "view",
+	slider: "slider",
+	switch: "switch_control",
+	togglebutton: "toggle_button",
+	button: "button",
+	messagebox: "view",
+	checkbox: "checkbox",
+	spinner: "dropdown",
+	dropdown: "dropdown",
+	textarea: "text_area",
+	textinput: "text_area",
+	textfield: "text_field",
+}
+
+/** UI2 element kind for a VML tag (unknown/custom tags build as views). */
+function elementKindForTag(tag: string): string {
+	return vmlTagKinds[tag.toLowerCase()] ?? "view"
+}
+
 function partMatches(part: VmlSelectorPart, kind: string, classes: string[], id: string): boolean {
 	// Type selectors match case-insensitively (`button` matches `Button`);
 	// ids and classes stay case-sensitive.
@@ -1256,7 +1352,7 @@ function selectorMatches(rule: VmlStyleRule, node: VmlNode, ancestors: VmlNode[]
 	if (
 		!partMatches(
 			{ kind: rule.kind, id: rule.id, className: rule.className },
-			node.kind,
+			elementKindForTag(node.kind),
 			nodeClasses(node),
 			nodeId(node),
 		)
@@ -1274,7 +1370,7 @@ function selectorMatches(rule: VmlStyleRule, node: VmlNode, ancestors: VmlNode[]
 	// combinator requires the immediately preceding element, while a space
 	// matches any earlier ancestor in order.
 	const chain = ancestors.map((ancestor) => ({
-		kind: ancestor.kind,
+		kind: elementKindForTag(ancestor.kind),
 		classes: nodeClasses(ancestor),
 		id: nodeId(ancestor),
 	}))
@@ -1311,21 +1407,14 @@ function selectorMatches(rule: VmlStyleRule, node: VmlNode, ancestors: VmlNode[]
 	return true
 }
 
-/** Structural pseudo-classes decidable from the parsed tree. */
-const structuralPseudos = new Set([
-	"first-child",
-	"last-child",
-	"only-child",
-	"nth-child",
-	"nth-last-child",
-	"first-of-type",
-	"last-of-type",
-	"only-of-type",
-	"nth-of-type",
-	"nth-last-of-type",
-	"empty",
-	"root",
-])
+/**
+ * Structural pseudo-classes decidable from the parsed tree. This mirrors the
+ * pseudo-classes UI2's own stylesheet parser accepts (`style_pseudo_no_arg`
+ * plus `nth-child` in `stylesheet_parse.v`): anything else — `:root`,
+ * `-of-type` variants, `:nth-last-child` — is rejected by the runtime, so
+ * the hover must not report such rules as statically matched.
+ */
+const structuralPseudos = new Set(["first-child", "last-child", "only-child", "nth-child", "empty"])
 
 /** True for pseudo-classes decidable from the parsed tree. */
 function isStructuralPseudo(pseudo: string): boolean {
@@ -1364,15 +1453,15 @@ function matchesNth(argument: string, position: number): boolean {
 
 /**
  * Check a structural pseudo-class against the tree. Siblings come from the
- * parent's children (identity); a top-level node defaults to index 0 of 1.
+ * parent's children (identity, `Style` blocks excluded since they never
+ * render); a top-level node defaults to index 0 of 1.
  */
 function structuralPseudoMatches(rule: VmlStyleRule, node: VmlNode, ancestors: VmlNode[]): boolean {
 	const pseudo = rule.pseudo.toLowerCase()
-	if (pseudo === "root") {
-		return ancestors.length === 0
-	}
 	if (pseudo === "empty") {
-		return node.children.length === 0
+		// UI2 requires both no children and no text.
+		const rendered = node.children.filter((child) => child.kind !== "Style")
+		return rendered.length === 0 && unquote(node.props["text"] ?? "").length === 0
 	}
 	const parent = ancestors.length > 0 ? ancestors[ancestors.length - 1] : undefined
 	const siblings = parent ? parent.children.filter((child) => child.kind !== "Style") : [node]
@@ -1380,28 +1469,17 @@ function structuralPseudoMatches(rule: VmlStyleRule, node: VmlNode, ancestors: V
 	if (index === -1) {
 		return false
 	}
-	const ofType = pseudo.endsWith("-of-type")
-	const pool = ofType
-		? siblings.filter((sibling) => sibling.kind.toLowerCase() === node.kind.toLowerCase())
-		: siblings
-	const position = pool.indexOf(node) + 1
-	const fromEnd = pool.length - position + 1
+	const position = index + 1
+	const fromEnd = siblings.length - position + 1
 	switch (pseudo) {
 		case "first-child":
-		case "first-of-type":
 			return position === 1
 		case "last-child":
-		case "last-of-type":
 			return fromEnd === 1
 		case "only-child":
-		case "only-of-type":
-			return pool.length === 1
+			return siblings.length === 1
 		case "nth-child":
-		case "nth-of-type":
 			return matchesNth(rule.pseudoArg, position)
-		case "nth-last-child":
-		case "nth-last-of-type":
-			return matchesNth(rule.pseudoArg, fromEnd)
 		default:
 			return false
 	}
@@ -1418,32 +1496,38 @@ function staticPseudoMatches(rule: VmlStyleRule, node: VmlNode, ancestors: VmlNo
 	return structuralPseudoMatches(rule, node, ancestors)
 }
 
-/** IDs beat classes, classes beat kinds, regardless of source order. */
+/**
+ * UI2 specificity buckets (`stylesheet_parse.v`): ids outrank any number of
+ * class-likes, which outrank any number of kinds. Class-likes count classes
+ * and pseudo-classes on every part of the selector chain.
+ */
 function specificity(rule: VmlStyleRule): number {
 	const countClasses = (dotted: string): number =>
 		dotted
 			.split(".")
 			.map((entry) => entry.trim())
 			.filter((entry) => entry.length > 0).length
-	let score = 0
+	let ids = 0
+	let classish = 0
+	let types = 0
 	const parts: VmlSelectorPart[] = [
 		...rule.ancestors,
 		{ kind: rule.kind, id: rule.id, className: rule.className },
 	]
 	for (const part of parts) {
 		if (part.id) {
-			score += 100
+			ids++
 		}
-		score += countClasses(part.className) * 10
+		classish += countClasses(part.className)
 		if (part.kind && part.kind !== "*") {
-			score += 1
+			types++
 		}
 	}
 	// A pseudo-class counts like a class.
 	if (rule.pseudo) {
-		score += 10
+		classish++
 	}
-	return score
+	return ids * 1000000 + classish * 1000 + types
 }
 
 /**
@@ -1467,6 +1551,47 @@ export function matchingRules(
 		)
 		.sort((a, b) => specificity(a) - specificity(b))
 }
+
+/**
+ * Stylesheet properties the hover may report as applied. Mirrors
+ * `stylesheet_known_props` in `stylesheet_cascade.v` minus the layout-owned
+ * `padding`/`margin`/`gap` (parsed but not applied in v1), plus the
+ * animation-driver-owned `transition-*`/`animation-*` declarations
+ * (`is_style_animation_prop`). Anything else only warns as unknown at
+ * runtime, so listing it as applied would mislead.
+ */
+const appliedStylesheetProperties: Set<string> = new Set([
+	"background",
+	"background-color",
+	"background-gradient",
+	"color",
+	"font-size",
+	"font-family",
+	"font-weight",
+	"font-style",
+	"text-align",
+	"text-decoration",
+	"border",
+	"border-radius",
+	"border-color",
+	"border-width",
+	"opacity",
+	"box-shadow",
+	"transition",
+	"transition-property",
+	"transition-duration",
+	"transition-timing-function",
+	"transition-delay",
+	"animation",
+	"animation-name",
+	"animation-duration",
+	"animation-timing-function",
+	"animation-delay",
+	"animation-iteration-count",
+	"animation-direction",
+	"animation-fill-mode",
+	"animation-play-state",
+])
 
 const inlinePropertyAliases: Record<string, string> = {
 	background: "background",
@@ -1532,27 +1657,123 @@ function parseStyleAttribute(value: string): Record<string, string> {
 }
 
 /**
- * Substitute `@var` references with scoped VSS variable values. Unknown
- * names are left alone so a typo stays visible instead of vanishing.
- * Chains (`@a` holding another `@b`) resolve iteratively with a small cap
- * so a cyclic definition terminates.
+ * Substitute `var(--name)` / `var(--name, fallback)` references, mirroring
+ * `style_var_function` in `stylesheet_cascade.v`: the fallback is everything
+ * after the first top-level comma, and an unresolvable name without a
+ * fallback is left alone so a typo stays visible instead of vanishing.
+ */
+function substituteVarFunctions(value: string, vars: Record<string, string>): string {
+	let out = ""
+	let cursor = 0
+	while (cursor < value.length) {
+		let varIndex = -1
+		let innerStart = -1
+		let search = cursor
+		while (true) {
+			const found = value.indexOf("var", search)
+			if (found === -1) {
+				break
+			}
+			// Not a function reference when glued to a name (`covariant`)
+			// or inside `${…}` interpolation.
+			const prev = found > 0 ? (value[found - 1] ?? "") : ""
+			const open = /^\s*\(/.exec(value.slice(found + 3))
+			if (/[A-Za-z0-9_$-]/.test(prev) || !open) {
+				search = found + 3
+				continue
+			}
+			varIndex = found
+			innerStart = found + 3 + open[0].length
+			break
+		}
+		if (varIndex === -1) {
+			out += value.slice(cursor)
+			break
+		}
+		let depth = 1
+		let close = -1
+		for (let i = innerStart; i < value.length; i++) {
+			if (value[i] === "(") {
+				depth++
+			} else if (value[i] === ")") {
+				depth--
+				if (depth === 0) {
+					close = i
+					break
+				}
+			}
+		}
+		if (close === -1) {
+			out += value.slice(cursor)
+			break
+		}
+		const inner = value.slice(innerStart, close)
+		let split = -1
+		let nested = 0
+		let quote = ""
+		for (let i = 0; i < inner.length; i++) {
+			const char = inner[i] ?? ""
+			if (quote) {
+				if (char === quote) {
+					quote = ""
+				}
+				continue
+			}
+			if (char === '"' || char === "'") {
+				quote = char
+				continue
+			}
+			if (char === "(") {
+				nested++
+			} else if (char === ")") {
+				nested--
+			} else if (char === "," && nested === 0) {
+				split = i
+				break
+			}
+		}
+		const name = (split === -1 ? inner : inner.slice(0, split)).trim()
+		const fallback = split === -1 ? undefined : inner.slice(split + 1).trim()
+		out += value.slice(cursor, varIndex)
+		if (name.startsWith("--") && name.length > 2 && Object.hasOwn(vars, name)) {
+			out += vars[name] ?? ""
+		} else if (fallback !== undefined) {
+			out += fallback
+		} else {
+			out += value.slice(varIndex, close + 1)
+		}
+		cursor = close + 1
+	}
+	return out
+}
+
+/**
+ * Substitute `@var` and `--var` references plus `var(--name)` functions with
+ * scoped VSS variable values. Unknown names are left alone so a typo stays
+ * visible instead of vanishing. Chains (`@a` holding another `@b`) resolve
+ * iteratively with a small cap so a cyclic definition terminates.
  */
 function resolveValue(value: string, vars: Record<string, string>): string {
-	if (!value.includes("@")) {
+	if (!value.includes("@") && !value.includes("--") && !value.includes("var")) {
 		return value
 	}
 	let result = value
 	for (let pass = 0; pass < 5; pass++) {
-		const next = result.replace(/@[A-Za-z_][A-Za-z0-9_-]*/g, (token) => {
-			if (Object.hasOwn(vars, token)) {
-				return vars[token] ?? token
-			}
-			const withoutAt = token.slice(1)
-			if (Object.hasOwn(vars, withoutAt)) {
-				return vars[withoutAt] ?? token
-			}
-			return token
-		})
+		const expanded = substituteVarFunctions(result, vars)
+		const next = expanded
+			.replace(/(?<![A-Za-z0-9_@$-])--[A-Za-z_][A-Za-z0-9_-]*/g, (token) =>
+				Object.hasOwn(vars, token) ? (vars[token] ?? token) : token,
+			)
+			.replace(/@[A-Za-z_][A-Za-z0-9_-]*/g, (token) => {
+				if (Object.hasOwn(vars, token)) {
+					return vars[token] ?? token
+				}
+				const withoutAt = token.slice(1)
+				if (Object.hasOwn(vars, withoutAt)) {
+					return vars[withoutAt] ?? token
+				}
+				return token
+			})
 		if (next === result) {
 			break
 		}
@@ -1603,9 +1824,9 @@ export function resolvedDeclarations(
 	const vars: Record<string, string> = { ...variables }
 	for (const rule of matched) {
 		for (const [key, value] of Object.entries(rule.declarations)) {
-			if (key.startsWith("@")) {
+			if (key.startsWith("@") || key.startsWith("--")) {
 				vars[key] = resolveValue(unquote(value), vars)
-				if (!key.startsWith("@@")) {
+				if (key.startsWith("@") && !key.startsWith("@@")) {
 					vars[key.slice(1)] = vars[key] ?? ""
 				}
 			}
@@ -1613,7 +1834,11 @@ export function resolvedDeclarations(
 	}
 	for (const rule of matched) {
 		for (const [key, value] of Object.entries(rule.declarations)) {
-			if (key.startsWith("@")) {
+			if (key.startsWith("@") || key.startsWith("--")) {
+				continue
+			}
+			// Layout-owned and unknown properties never apply at runtime.
+			if (!appliedStylesheetProperties.has(key.toLowerCase())) {
 				continue
 			}
 			merged[key] = resolveValue(value, vars)
@@ -1622,7 +1847,7 @@ export function resolvedDeclarations(
 	if (node.props["style"] !== undefined) {
 		const style = parseStyleAttribute(node.props["style"] ?? "")
 		for (const [key, value] of Object.entries(style)) {
-			if (key.startsWith("@")) {
+			if (key.startsWith("@") || key.startsWith("--")) {
 				vars[key] = resolveValue(value, vars)
 				continue
 			}
@@ -1630,7 +1855,13 @@ export function resolvedDeclarations(
 		}
 	}
 	for (const [prop, raw] of Object.entries(node.props)) {
-		if (prop === "__rules" || prop === "__vars" || prop === "style" || prop.startsWith("@")) {
+		if (
+			prop === "__rules" ||
+			prop === "__vars" ||
+			prop === "style" ||
+			prop.startsWith("@") ||
+			prop.startsWith("--")
+		) {
 			continue
 		}
 		const css = inlineCssProperty(prop)

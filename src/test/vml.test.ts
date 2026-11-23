@@ -377,7 +377,8 @@ describe("VML round-3 reviewer fixes", () => {
 			ancestorsOf(nodes, label),
 		)
 		assert.strictEqual(resolvedLabel["color"], "blue")
-		assert.strictEqual(resolvedLabel["margin"], "1px")
+		// `margin` parses but is layout-owned in v1, so it never applies.
+		assert.strictEqual(resolvedLabel["margin"], undefined)
 		assert.strictEqual(resolvedLabel["background"], undefined)
 		assert.strictEqual(
 			resolvedDeclarations(view, collectRules(nodes, view))["background"],
@@ -447,8 +448,17 @@ describe("VML round-3 reviewer fixes", () => {
 		)
 		const button = nodes[0]?.children[0]
 		assert.ok(button)
-		const resolved = resolvedDeclarations(button, collectRules(nodes, button))
-		assert.strictEqual(resolved["background-image"], "url(http://example.test/image.png)")
+		const rules = collectRules(nodes, button)
+		// The declaration still parses with the URL intact; `background-image`
+		// is unknown to UI2, so it is collected but never reported as applied.
+		assert.strictEqual(
+			matchingRules(button, rules, ancestorsOf(nodes, button))[0]?.declarations[
+				"background-image"
+			],
+			"url(http://example.test/image.png)",
+		)
+		const resolved = resolvedDeclarations(button, rules)
+		assert.strictEqual(resolved["background-image"], undefined)
 		assert.strictEqual(resolved["color"], "red")
 	})
 
@@ -530,6 +540,171 @@ describe("VML round-3 reviewer fixes", () => {
 				(rule) => rule.selector,
 			),
 			["button", ".Button"],
+		)
+	})
+})
+
+describe("VML round-4 reviewer fixes", () => {
+	it("matches selectors against UI2 element kinds", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tview { color: applied; }\n\t\tRectangle { color: bogus; }\n\t\ttext_field { color: field; }\n\t}\n\tRectangle { id: card }\n\tTextField { id: input }\n\tMyWidget { id: custom }\n}",
+		)
+		const rect = nodes[0]?.children[0]
+		const field = nodes[0]?.children[1]
+		const custom = nodes[0]?.children[2]
+		assert.ok(rect && field && custom)
+		// `view` applies to a Rectangle at runtime, while a `Rectangle`
+		// rule never matches anything.
+		assert.deepStrictEqual(
+			matchingRules(rect, collectRules(nodes, rect), ancestorsOf(nodes, rect)).map(
+				(rule) => rule.selector,
+			),
+			["view"],
+		)
+		assert.strictEqual(
+			resolvedDeclarations(rect, collectRules(nodes, rect), ancestorsOf(nodes, rect))[
+				"color"
+			],
+			"applied",
+		)
+		// TextField elements carry the text_field kind.
+		assert.deepStrictEqual(
+			matchingRules(field, collectRules(nodes, field), ancestorsOf(nodes, field)).map(
+				(rule) => rule.selector,
+			),
+			["text_field"],
+		)
+		// Imported/custom widgets build as views.
+		assert.deepStrictEqual(
+			matchingRules(custom, collectRules(nodes, custom), ancestorsOf(nodes, custom)).map(
+				(rule) => rule.selector,
+			),
+			["view"],
+		)
+	})
+
+	it("resolves CSS custom properties and var() fallbacks", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\t--brand: #3478D4;\n\t\tButton { background: var(--brand); border-color: var(--missing, #112233); color: --brand; }\n\t}\n\tButton { id: b }\n}",
+		)
+		const button = nodes[0]?.children[0]
+		assert.ok(button)
+		const resolved = resolvedDeclarations(
+			button,
+			collectRules(nodes, button),
+			ancestorsOf(nodes, button),
+			collectVariables(nodes, button),
+		)
+		assert.strictEqual(resolved["background"], "#3478D4")
+		assert.strictEqual(resolved["border-color"], "#112233")
+		assert.strictEqual(resolved["color"], "#3478D4")
+	})
+
+	it("collects light/dark theme variables", () => {
+		const nodes = parseVml(
+			"light { @top: #333333; }\nScreen {\n\tStyle {\n\t\tlight { @brand: #111111; }\n\t\tdark { @brand: #222222; }\n\t\tButton { background: @brand; color: @top; }\n\t}\n\tButton { id: b }\n}",
+		)
+		const button = nodes[0]?.children[0]
+		assert.ok(button)
+		const vars = collectVariables(nodes, button)
+		assert.ok(vars["@brand"] !== undefined && vars["@brand"] !== "@brand")
+		// Later blocks win, mirroring the cascade merge.
+		assert.strictEqual(vars["@brand"], "#222222")
+		const resolved = resolvedDeclarations(
+			button,
+			collectRules(nodes, button),
+			ancestorsOf(nodes, button),
+			vars,
+		)
+		assert.strictEqual(resolved["background"], "#222222")
+		assert.strictEqual(resolved["color"], "#333333")
+	})
+
+	it("requires no text for :empty", () => {
+		const nodes = parseVml(
+			'Screen {\n\tStyle {\n\t\tLabel:empty { color: empty; }\n\t}\n\tLabel { id: blank }\n\tLabel { id: text text: "hi" }\n\tLabel { id: styled Style { Button { color: red; } } }\n}',
+		)
+		const blank = nodes[0]?.children[0]
+		const text = nodes[0]?.children[1]
+		const styled = nodes[0]?.children[2]
+		assert.ok(blank && text && styled)
+		assert.deepStrictEqual(
+			matchingRules(blank, collectRules(nodes, blank), ancestorsOf(nodes, blank)).map(
+				(rule) => rule.selector,
+			),
+			["Label:empty"],
+		)
+		// A Label with text is not empty even without children.
+		assert.deepStrictEqual(
+			matchingRules(text, collectRules(nodes, text), ancestorsOf(nodes, text)),
+			[],
+		)
+		// A Style child never renders, so it does not count either.
+		assert.deepStrictEqual(
+			matchingRules(styled, collectRules(nodes, styled), ancestorsOf(nodes, styled)).map(
+				(rule) => rule.selector,
+			),
+			["Label:empty"],
+		)
+	})
+
+	it("hides layout-owned and unknown declarations from applied style", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tButton { padding: 5px; margin: 1px; gap: 2px; color: red; bogus-prop: 1px; transition-duration: 0.2s; }\n\t}\n\tButton { id: b }\n}",
+		)
+		const button = nodes[0]?.children[0]
+		assert.ok(button)
+		const rules = collectRules(nodes, button)
+		const resolved = resolvedDeclarations(button, rules, ancestorsOf(nodes, button))
+		assert.strictEqual(resolved["color"], "red")
+		// Driver-owned animation declarations do apply.
+		assert.strictEqual(resolved["transition-duration"], "0.2s")
+		// Layout-owned and unknown properties never apply at runtime.
+		assert.strictEqual(resolved["padding"], undefined)
+		assert.strictEqual(resolved["margin"], undefined)
+		assert.strictEqual(resolved["gap"], undefined)
+		assert.strictEqual(resolved["bogus-prop"], undefined)
+		const hover = hoverTextFor(button, rules, ancestorsOf(nodes, button))
+		assert.ok(hover.includes("color"))
+		assert.ok(!hover.includes("bogus-prop"))
+		assert.ok(!hover.includes("padding"))
+	})
+
+	it("treats only UI2-supported pseudos as structural", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tButton:first-of-type { color: typo; }\n\t\tButton:root { color: rooted; }\n\t\tButton:first-child { color: first; }\n\t}\n\tButton { id: a }\n\tButton { id: b }\n}",
+		)
+		const first = nodes[0]?.children[0]
+		assert.ok(first)
+		const rules = collectRules(nodes, first)
+		// The runtime parser rejects :-of-type and :root, so only the
+		// supported structural rule matches statically.
+		assert.deepStrictEqual(
+			matchingRules(first, rules, ancestorsOf(nodes, first)).map((rule) => rule.selector),
+			["Button:first-child"],
+		)
+		const hover = hoverTextFor(first, rules, ancestorsOf(nodes, first))
+		assert.ok(hover.includes("Button:first-child"))
+		assert.ok(hover.includes("State-dependent"))
+		assert.ok(hover.includes("Button:first-of-type"))
+		assert.ok(hover.includes("Button:root"))
+	})
+
+	it("orders specificity in UI2 buckets", () => {
+		const nodes = parseVml(
+			'Screen {\n\tStyle {\n\t\t.a.b.c.d.e.f.g.h.i.j.k { color: many; }\n\t\t#pick { color: single; }\n\t}\n\tButton { id: pick class: "a b c d e f g h i j k" }\n}',
+		)
+		const button = nodes[0]?.children[0]
+		assert.ok(button)
+		const rules = collectRules(nodes, button)
+		assert.deepStrictEqual(
+			matchingRules(button, rules, ancestorsOf(nodes, button)).map((rule) => rule.selector),
+			[".a.b.c.d.e.f.g.h.i.j.k", "#pick"],
+		)
+		// Eleven classes still lose to one id: buckets, not points.
+		assert.strictEqual(
+			resolvedDeclarations(button, rules, ancestorsOf(nodes, button))["color"],
+			"single",
 		)
 	})
 })
