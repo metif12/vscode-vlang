@@ -1,7 +1,7 @@
 {
 	"name": "VSS",
 	"scopeName": "source.vss",
-	"$comment": "values precede selectors so hex colors win over ID selectors (ID rule also guards hex explicitly); at-rules cover supports plus a generic block fallback; -- custom properties are variables; transition-*/animation-* intentionally absent (unsupported).",
+	"$comment": "hex colors win in value position (the hex matcher rejects selector headers, i.e. text running to an opening brace with no declaration in between); IDs therefore need no hex guard and match hex-shaped selectors such as #abc; at-rules cover supports plus a generic block fallback; -- custom properties are variables; transition-*/animation-* intentionally absent (unsupported).",
 	"fileTypes": [".vss"],
 	"patterns": [
 		{ "include": "#comments" },
@@ -46,7 +46,7 @@
 				},
 				{
 					"name": "entity.other.attribute-name.id.vss",
-					"match": "#(?![0-9a-fA-F]{3,8}\\b)[a-zA-Z_][a-zA-Z0-9_-]*"
+					"match": "#[a-zA-Z_][a-zA-Z0-9_-]*"
 				},
 				{ "name": "entity.other.attribute-name.pseudo-class.vss", "match": ":[a-zA-Z_-]+" }
 			]
@@ -61,7 +61,10 @@
 		},
 		"values": {
 			"patterns": [
-				{ "name": "constant.numeric.color.hex.vss", "match": "#[0-9a-fA-F]{3,8}\\b" },
+				{
+					"name": "constant.numeric.color.hex.vss",
+					"match": "#[0-9a-fA-F]{3,8}\\b(?!(?:(?!:\\s)[^;{}])*\\{)"
+				},
 				{ "name": "constant.numeric.vss", "match": "\\b\\d+(\\.\\d+)?(px|%)?(?!\\w)" },
 				{ "name": "string.quoted.double.vss", "begin": "\"", "end": "\"" }
 			]

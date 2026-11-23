@@ -115,4 +115,11 @@ View.still { transition-duration: 1px; animation-name: white; }
 #main { color: white; }
 //<----- entity.other.attribute-name.id.vss
 //      ^^^^^ support.type.property-name.vss
+#abc { color: white; }
+//<---- entity.other.attribute-name.id.vss - constant.numeric.color.hex.vss
+//     ^^^^^ support.type.property-name.vss
+Button#face { color: white; }
+//<------ entity.name.tag.vss
+//    ^^^^^ entity.other.attribute-name.id.vss - constant.numeric.color.hex.vss
+//            ^^^^^ support.type.property-name.vss
 }
