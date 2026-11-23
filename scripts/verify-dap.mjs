@@ -32,6 +32,18 @@ const GDB = flagValue("gdb") ?? process.env.GDB ?? "gdb"
 const CC = flagValue("cc") ?? process.env.CC ?? "cc"
 const EXE = process.platform === "win32" ? ".exe" : ""
 
+/** Quote one path for embedding in a gdb CLI string (`-ex`/`-iex`).
+ *
+ * The scripts pass argv directly (no shell), but gdb parses the `-ex`
+ * string itself and splits on spaces — so a repo or temp dir with spaces
+ * breaks `source`/`generate-core-file` without quoting. Forward slashes
+ * avoid backslash-escaping issues on Windows; quoting only when needed
+ * keeps the common case readable. Mirrors `quoteCliArgument`. */
+function gdbQuote(value) {
+	const normalized = String(value).replace(/\\/g, "/")
+	return /[\s"]/.test(normalized) ? `"${normalized.replace(/"/g, '\\"')}"` : normalized
+}
+
 /** Whether a command resolves: spawning it does not fail outright. */
 function commandExists(command) {
 	const result = spawnSync(command, ["--version"], { stdio: "ignore" })
@@ -161,7 +173,7 @@ function main() {
 		try {
 			const printersResult = spawnSync(
 				GDB,
-				["--batch", "-ex", `source ${printers}`, "-ex", "quit"],
+				["--batch", "-ex", `source ${gdbQuote(printers)}`, "-ex", "quit"],
 				{
 					encoding: "utf8",
 					stdio: ["ignore", "pipe", "pipe"],
@@ -192,7 +204,7 @@ function main() {
 				"-ex",
 				"run",
 				"-ex",
-				`generate-core-file ${corePath}`,
+				`generate-core-file ${gdbQuote(corePath)}`,
 				"-ex",
 				"kill",
 				crasherBin,

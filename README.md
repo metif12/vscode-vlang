@@ -358,7 +358,8 @@ a local VS Code test build if `CODE_EXECUTABLE` is unset. Set `VLS_BINARY` and
 `TEST_PACKAGED=1` when running `npm run test:vscode` to install and test the
 VSIX in an isolated VS Code profile.
 
-DAP live verification (`node scripts/verify-dap.mjs`) runs in CI; locally it requires gdb >= 13 with Python.
+DAP live verification (`node scripts/verify-dap.mjs`) runs in CI; locally it
+requires gdb >= 13 with Python.
 
 ## Debugging
 
@@ -388,8 +389,12 @@ symbols (nothing is compiled), `processId` takes a PID or
 `${command:v.pickProcess}`, and `coreFile` opens a core dump without any PID.
 The built-in adapter forwards the PID as the numeric `pid` (or the dump as
 `coreFile`) that GDB DAP and lldb-dap expect; `miDebuggerServerAddress` becomes
-their `target`. `sourceFileMap`, `miDebuggerServerAddress` and `pipeTransport`
-reach remote targets (cppdbg fallback only, except `target` on attach).
+their `target`. `sourceFileMap`, `miDebuggerServerAddress` and
+`pipeTransport` also reach remote targets over the built-in adapter:
+`sourceFileMap` and `setupCommands` are forwarded through the pipe (only the
+local printers script is skipped, since its path does not exist remotely),
+and the lldb formatter import is omitted for pipe sessions for the same
+reason.
 
 A `Debug Main` lens over `fn main` starts the same pipeline without a launch
 configuration. Panics stop in the debugger instead of exiting: debug builds trap
@@ -414,8 +419,8 @@ Feature matrix:
 | attach           | yes                          | yes             |
 | core-file attach | yes                          | no              |
 | externalConsole  | no (use integrated terminal) | yes             |
-| pipeTransport    | no                           | yes             |
-| remote ssh       | no                           | yes             |
+| pipeTransport    | yes (printers skipped)       | yes             |
+| remote ssh       | yes (via pipeTransport)      | yes             |
 
 ## License
 

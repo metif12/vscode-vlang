@@ -29,12 +29,21 @@ import {
 
 describe("V debug compile", () => {
 	it("writes the debug binary to a temporary directory", () => {
-		const binary = debugBinaryPath("/w/app/src/main.v")
+		const binary = debugBinaryPath("/w/app/src/main.v", "linux")
 		// A debug build is not something the user asked to keep, so it goes to a
 		// temporary directory rather than next to the source.
 		assert.strictEqual(path.dirname(binary), os.tmpdir())
 		assert.ok(path.basename(binary).startsWith("v-debug-"))
 		assert.ok(path.basename(binary).endsWith("-main"))
+	})
+
+	it("names the Windows binary with the .exe that V always writes", () => {
+		// V appends `.exe` to the `-o` target on Windows even when the name has
+		// no extension, so the path handed to the adapter must include it or the
+		// launch points at a file that does not exist.
+		const binary = debugBinaryPath("/w/app/src/main.v", "win32")
+		assert.ok(path.basename(binary).endsWith("-main.exe"))
+		assert.strictEqual(path.dirname(binary), os.tmpdir())
 	})
 
 	it("compiles with debug info and an explicit output path", () => {
@@ -523,10 +532,13 @@ describe("V debug compile", () => {
 			})
 		})
 
-		it("keeps both pid and coreFile when both are set", () => {
+		it("prefers a core file over an explicit PID", () => {
+			// GDB DAP tries pid first, so sending both would attach to the
+			// live process and ignore the dump the user asked for — the same
+			// shadowing the remote-target case avoids.
 			assert.deepStrictEqual(
 				dapAttachFields({ processId: "1234", coreFile: "/tmp/core.test" }),
-				{ pid: 1234, coreFile: "/tmp/core.test" },
+				{ coreFile: "/tmp/core.test" },
 			)
 		})
 
@@ -653,6 +665,15 @@ describe("V debug compile", () => {
 			assert.deepStrictEqual(
 				parseEnvFile("# comment\n\nA=1\nB = two = three\nNOEQUALS\n=noname\n"),
 				{ A: "1", B: "two = three" },
+			)
+		})
+
+		it("strips one pair of matching quotes around a value", () => {
+			// dotenv convention: `FOO="bar baz"` sets `bar baz`, not the
+			// literal `"bar baz"` including the quotes.
+			assert.deepStrictEqual(
+				parseEnvFile('A="bar baz"\nB=\'single two\'\nC=plain\nD="mismatched\'\nE=""\n'),
+				{ A: "bar baz", B: "single two", C: "plain", D: "\"mismatched'", E: "" },
 			)
 		})
 

@@ -26,6 +26,16 @@ const WORK = args.work || ""
 const ATTACH_PID = Number(args["attach-pid"])
 const ATTACH_BIN = args["attach-bin"] || ""
 const TIMEOUT_MS = 30_000
+/** Quote one path for embedding in a gdb CLI string (`-iex`/`-ex`).
+ *
+ * The client spawns gdb with argv directly (no shell), but gdb parses the
+ * `-iex`/`-ex` string itself and splits on spaces — so a repo or temp dir
+ * with spaces breaks `source`/`core-file` without quoting. Forward slashes
+ * avoid backslash-escaping issues on Windows. Mirrors `quoteCliArgument`. */
+function gdbQuote(value) {
+	const normalized = String(value).replace(/\\/g, "/")
+	return /[\s"]/.test(normalized) ? `"${normalized.replace(/"/g, '\\"')}"` : normalized
+}
 /** Per-request timeout: a response that never arrives fails the check loudly
  * instead of hanging CI. Resolves (not rejects) so callers keep the uniform
  * `if (!response.success) fail(...)` shape. */
@@ -211,7 +221,7 @@ function startSession(extraArgs) {
 }
 
 async function checkLaunch() {
-	const session = startSession(["-iex", `source ${PRINTERS}`])
+	const session = startSession(["-iex", `source ${gdbQuote(PRINTERS)}`])
 	const init = await session.send("initialize", { adapterID: "verify-dap" })
 	if (!init.success) {
 		fail("launch", `initialize failed: ${JSON.stringify(init)}`)
@@ -294,7 +304,14 @@ async function checkCoreViaBatch() {
 	const { spawnSync } = await import("node:child_process")
 	const result = spawnSync(
 		GDB,
-		["--batch", "-ex", `core-file ${WORK}/core.test`, "-ex", "bt", `${WORK}/crasher`],
+		[
+			"--batch",
+			"-ex",
+			`core-file ${gdbQuote(`${WORK}/core.test`)}`,
+			"-ex",
+			"bt",
+			`${WORK}/crasher`,
+		],
 		{ encoding: "utf8" },
 	)
 	const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`

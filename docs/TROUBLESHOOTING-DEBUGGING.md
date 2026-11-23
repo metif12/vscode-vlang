@@ -44,7 +44,8 @@ shows instead of launching into an old build.
 ## Program input and output
 
 I/O goes to the integrated terminal by default. Set
-`"externalConsole": true` for a separate console window. There is no
+`"externalConsole": true` for a separate console window (cppdbg fallback
+only; the built-in adapters ignore it and stay integrated). There is no
 internal-console mode: that knob does not exist on `cppdbg`.
 
 ## Environment variables

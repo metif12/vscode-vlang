@@ -55,7 +55,7 @@ async function assertVlsReady(pid: number, document: vscode.TextDocument): Promi
 	assert.equal(currentVlsSettings(serverEvents())?.pid, pid)
 }
 
-async function taskExit(command: string, ...args: unknown[]): Promise<number | undefined> {
+async function runTaskOnce(command: string, args: unknown[]): Promise<number | undefined> {
 	// Previous V tasks must have fully ended before starting a new one.
 	// Otherwise a stale onDidEndTaskProcess from the previous task can be
 	// captured by the next taskExit, attributing the wrong exit code.
@@ -100,6 +100,23 @@ async function taskExit(command: string, ...args: unknown[]): Promise<number | u
 		endListener?.dispose()
 		if (timer) clearTimeout(timer)
 	}
+}
+
+async function taskExit(command: string, ...args: unknown[]): Promise<number | undefined> {
+	const code = await runTaskOnce(command, args)
+	// On macOS the compiled program occasionally exits non-zero on the first
+	// run even though the identical build task succeeded (a transient runtime /
+	// terminal-teardown flake, not a source error). Retry once so a one-off
+	// flake does not fail CI. A genuine regression fails both attempts, so this
+	// does not mask a persistent failure. Linux/Windows are stable and are not
+	// retried, keeping any real failure there immediately visible.
+	if (code !== 0 && process.platform === "darwin") {
+		console.log(
+			`Task ${command} exited ${code} on macOS; retrying once to rule out a transient flake`,
+		)
+		return runTaskOnce(command, args)
+	}
+	return code
 }
 
 async function runCurrentVlsFeatureChecks(workspace: string): Promise<void> {

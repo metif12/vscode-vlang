@@ -14,9 +14,17 @@ let debugSessionCounter = 0
  * The name carries a timestamp, a counter and the program name, so two sessions on
  * the same program do not collide and a leftover is identifiable.
  */
-export function debugBinaryPath(program: string): string {
+export function debugBinaryPath(
+	program: string,
+	platform: NodeJS.Platform = process.platform,
+): string {
 	const base = path.basename(program, path.extname(program))
-	return path.join(os.tmpdir(), `v-debug-${Date.now()}-${debugSessionCounter++}-${base}`)
+	const name = `v-debug-${Date.now()}-${debugSessionCounter++}-${base}`
+	// V always writes a `.exe` on Windows, even when `-o` names a file without
+	// the extension (verified: `-o v-debug-x` produces `v-debug-x.exe`). The
+	// adapter must be handed the real on-disk name or the launch fails with a
+	// missing executable.
+	return path.join(os.tmpdir(), platform === "win32" ? `${name}.exe` : name)
 }
 
 /** The arguments for compiling a program for debugging.
@@ -502,9 +510,10 @@ export function shouldSkipProcessPicker(input: {
  * `processId` string the `cppdbg` adapter accepts. A PID that is not a
  * positive integer, or an attach with neither a PID, a target, nor a core
  * file, is a configuration error surfaced before any session starts. When
- * a remote target is set it wins over a PID: GDB documents attach as
- * trying `pid`, then `target`, then `coreFile` (first one found is used),
- * so sending both would attach locally and silently ignore the remote.
+ * a remote target or a core file is set it wins over a PID: GDB documents
+ * attach as trying `pid`, then `target`, then `coreFile` (first one found is
+ * used), so sending both would attach locally and silently ignore the
+ * remote or dump the user asked for.
  */
 export function dapAttachFields(input: {
 	processId?: string
@@ -528,9 +537,12 @@ export function dapAttachFields(input: {
 		return { error: `Cannot debug: "${input.processId}" is not a process ID.` }
 	}
 	return {
-		// A remote target takes precedence: sending both would let the
-		// local pid shadow the remote the user asked for.
-		...(target ? { target } : { pid }),
+		// A remote target or a core file takes precedence over a live PID:
+		// GDB DAP tries `pid` first, so sending both would attach to the
+		// local process and silently ignore the remote or dump the user
+		// asked for. An explicit PID alongside a coreFile is therefore
+		// dropped, exactly as it is alongside a target.
+		...(target ? { target } : coreFile ? {} : { pid }),
 		...(coreFile ? { coreFile } : {}),
 	}
 }
@@ -550,7 +562,18 @@ export function parseEnvFile(text: string): Record<string, string> {
 		}
 		const eq = line.indexOf("=")
 		if (eq > 0) {
-			entries[line.slice(0, eq).trim()] = line.slice(eq + 1).trim()
+			let value = line.slice(eq + 1).trim()
+			// dotenv convention: a value wrapped in matching quotes carries the
+			// quotes as grouping, not as part of the value. Strip one matching
+			// pair so `FOO="bar baz"` sets `bar baz`, not `"bar baz"`.
+			if (
+				value.length >= 2 &&
+				((value.startsWith('"') && value.endsWith('"')) ||
+					(value.startsWith("'") && value.endsWith("'")))
+			) {
+				value = value.slice(1, -1)
+			}
+			entries[line.slice(0, eq).trim()] = value
 		}
 	}
 	return entries

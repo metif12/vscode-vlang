@@ -408,13 +408,14 @@ export class VDebugConfigurationProvider implements vscode.DebugConfigurationPro
 					usePrettyPrinters,
 				})
 			}
-			// GDB DAP and lldb-dap attach take `pid` for a live process, `target`
-			// for a remote, or `coreFile` for a post-mortem: the cppdbg
-			// `processId` string (or a target-only or core-file-only
-			// configuration with no PID at all) maps here, because neither
-			// adapter recognizes `processId`. The target comes from
-			// miDebuggerServerAddress first, so a remote attach validates even
-			// without a PID — and when both are set the target wins.
+			// GDB DAP attach takes `pid` for a live process, `target` for a
+			// remote, or `coreFile` for a post-mortem; lldb-dap takes `pid` /
+			// `coreFile` but reaches a remote via `attachCommands` instead of
+			// `target`. The cppdbg `processId` string (or a target-only or
+			// core-file-only configuration with no PID at all) maps here,
+			// because neither adapter recognizes `processId`. The target comes
+			// from miDebuggerServerAddress first, so a remote attach validates
+			// even without a PID — and when both are set the target wins.
 			const fields = dapAttachFields({ processId, coreFile, target })
 			if ("error" in fields) {
 				void vscode.window.showErrorMessage(fields.error)
@@ -439,7 +440,15 @@ export class VDebugConfigurationProvider implements vscode.DebugConfigurationPro
 				program: vConfiguration.program,
 				...(fields.pid !== undefined ? { pid: fields.pid } : {}),
 				...(fields.coreFile ? { coreFile: fields.coreFile } : {}),
-				...(fields.target ? { target: fields.target } : {}),
+				// GDB DAP takes `target` for a remote, but lldb-dap has no such
+				// field: it attaches to a debug server via `gdb-remote` in
+				// `attachCommands`. Sending `target` to lldb-dap is ignored and,
+				// with no pid, it would fall back to attaching by program name.
+				...(fields.target
+					? miMode === "lldb"
+						? { attachCommands: [`gdb-remote ${fields.target}`] }
+						: { target: fields.target }
+					: {}),
 				cwd,
 				miDebuggerPath: debuggerPath,
 				MIMode: miMode,
@@ -451,7 +460,7 @@ export class VDebugConfigurationProvider implements vscode.DebugConfigurationPro
 							sourceFileMap: vConfiguration.sourceFileMap,
 							setupCommands: vConfiguration.setupCommands,
 							usePrettyPrinters,
-							formattersPath: lldbFormattersPath(),
+							formattersPath: pipeMode ? undefined : lldbFormattersPath(),
 						})
 					: {
 							...(vConfiguration.sourceFileMap
@@ -536,7 +545,7 @@ export class VDebugConfigurationProvider implements vscode.DebugConfigurationPro
 									sourceFileMap: vConfiguration.sourceFileMap,
 									setupCommands: vConfiguration.setupCommands,
 									usePrettyPrinters,
-									formattersPath: lldbFormattersPath(),
+									formattersPath: pipeMode ? undefined : lldbFormattersPath(),
 								})
 							: {
 									stopAtEntry: vConfiguration.stopAtEntry ?? false,
@@ -678,6 +687,24 @@ class VDebugCodeLensProvider implements vscode.CodeLensProvider {
 	}
 }
 
+/** The `-iex` source-mapping and setup-command arguments a gdb DAP session
+ * needs, shared by the local and remote-pipe branches so a pipe session does
+ * not silently drop them. `setupCommands` are documented as MI commands;
+ * `gdb -iex` expects CLI, so known MI shapes translate (the pretty-printer
+ * enablement included) instead of failing as undefined commands. The
+ * pretty-printer `source` is deliberately NOT here: it is a local path, added
+ * only for a local session — a remote pipe has no such file. */
+function gdbSessionSetupArgs(config: VDebugConfiguration): string[] {
+	const args: string[] = []
+	for (const [from, to] of Object.entries(config.sourceFileMap ?? {})) {
+		args.push("-iex", `set substitute-path ${quoteCliArgument(from)} ${quoteCliArgument(to)}`)
+	}
+	for (const command of config.setupCommands ?? []) {
+		args.push("-iex", gdbSetupCommandToCli(command.text))
+	}
+	return args
+}
+
 class VDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
 	createDebugAdapterDescriptor(
 		session: vscode.DebugSession,
@@ -704,9 +731,12 @@ class VDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFac
 					pt.pipeCwd ? { cwd: pt.pipeCwd } : undefined,
 				)
 			}
+			// Remote gdb still needs the source mapping and setup commands;
+			// only the local printers script is skipped, since its path does
+			// not exist on the remote end of the pipe.
 			return new vscode.DebugAdapterExecutable(
 				pipePath,
-				pipeTransportArgs(pt, ["-i=dap"]),
+				pipeTransportArgs(pt, ["-i=dap", ...gdbSessionSetupArgs(config)]),
 				pt.pipeCwd ? { cwd: pt.pipeCwd } : undefined,
 			)
 		}
@@ -736,19 +766,7 @@ class VDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFac
 			args.push("-iex", `source ${quoteCliArgument(vPrintersPath(__dirname))}`)
 			// gdb >= 13 required; older gdb may parse -iex differently under DAP.
 		}
-		const sessionConfig = session.configuration as VDebugConfiguration
-		for (const [from, to] of Object.entries(sessionConfig.sourceFileMap ?? {})) {
-			args.push(
-				"-iex",
-				`set substitute-path ${quoteCliArgument(from)} ${quoteCliArgument(to)}`,
-			)
-		}
-		// `setupCommands` are documented as MI commands; `gdb -iex` expects
-		// CLI, so known MI shapes translate (the pretty-printer enablement
-		// included) instead of failing as undefined commands.
-		for (const command of sessionConfig.setupCommands ?? []) {
-			args.push("-iex", gdbSetupCommandToCli(command.text))
-		}
+		args.push(...gdbSessionSetupArgs(config))
 		return new vscode.DebugAdapterExecutable(debuggerPath, args)
 	}
 }
@@ -783,7 +801,11 @@ async function pickProcess(): Promise<string | undefined> {
 				}
 			}
 		}
-	} catch {
+	} catch (error) {
+		// A failed process listing must not look like the user pressing Esc:
+		// surface why the picker could not open instead of silently cancelling.
+		const detail = error instanceof Error ? error.message : String(error)
+		void vscode.window.showErrorMessage(`Cannot debug: listing processes failed: ${detail}`)
 		return undefined
 	}
 	const choice = await vscode.window.showQuickPick(
