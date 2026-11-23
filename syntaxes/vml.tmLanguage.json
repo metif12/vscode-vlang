@@ -7,7 +7,8 @@
 		"comments": {
 			"patterns": [
 				{ "name": "comment.line.double-slash.vml", "match": "//.*$" },
-				{ "name": "comment.block.vml", "begin": "<!--", "end": "-->" }
+				{ "name": "comment.block.vml", "begin": "<!--", "end": "-->" },
+				{ "name": "comment.block.vss.vml", "begin": "/\\*", "end": "\\*/" }
 			]
 		},
 		"module": {
@@ -82,16 +83,30 @@
 		"style-rule": {
 			"patterns": [
 				{
-					"name": "meta.selector.vml",
-					"begin": "([A-Za-z_][A-Za-z0-9_]*)(\\.[A-Za-z_][A-Za-z0-9_-]*|:[a-zA-Z_-]+)*\\s*(\\{)",
+					"name": "meta.at-rule.vml",
+					"begin": "(\\s*)(@(?:media|container)\\b[^\\{\\}]*)(\\{)",
 					"beginCaptures": {
-						"1": { "name": "entity.name.tag.vml" },
-						"2": { "name": "entity.other.attribute-name.class.vml" },
+						"2": { "name": "keyword.control.at-rule.vml" },
 						"3": { "name": "punctuation.definition.block.begin.vml" }
 					},
 					"end": "\\}",
 					"endCaptures": { "0": { "name": "punctuation.definition.block.end.vml" } },
-					"patterns": [{ "include": "#comments" }, { "include": "#declaration" }]
+					"patterns": [{ "include": "#style-rule" }, { "include": "#comments" }]
+				},
+				{
+					"name": "meta.selector.vml",
+					"begin": "([^\\{\\};\"'$]+)(\\{)",
+					"beginCaptures": {
+						"1": { "name": "entity.name.tag.vml" },
+						"2": { "name": "punctuation.definition.block.begin.vml" }
+					},
+					"end": "\\}",
+					"endCaptures": { "0": { "name": "punctuation.definition.block.end.vml" } },
+					"patterns": [
+						{ "include": "#style-rule" },
+						{ "include": "#comments" },
+						{ "include": "#declaration" }
+					]
 				}
 			]
 		},

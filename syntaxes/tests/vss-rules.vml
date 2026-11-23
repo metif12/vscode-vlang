@@ -1,0 +1,75 @@
+// SYNTAX TEST "text.vml" "vss-rules"
+Screen {
+// <------ entity.name.tag.vml
+//     ^ punctuation.definition.block.begin.vml
+  Style {
+//^^^^^ keyword.control.style.vml
+//      ^ punctuation.definition.block.begin.vml
+    .card {
+//  ^^^^^ entity.name.tag.vml
+//        ^ punctuation.definition.block.begin.vml
+      color: red;
+//    ^^^^^ support.type.property-name.vml
+    }
+//  ^ punctuation.definition.block.end.vml
+    Button#login {
+//  ^^^^^^^^^^^^ entity.name.tag.vml
+//               ^ punctuation.definition.block.begin.vml
+      color: blue;
+    }
+    #login {
+//  ^^^^^^ entity.name.tag.vml
+//         ^ punctuation.definition.block.begin.vml
+      color: green;
+    }
+    * {
+//  ^ entity.name.tag.vml
+//    ^ punctuation.definition.block.begin.vml
+      color: gray;
+    }
+    Screen Button {
+//  ^^^^^^^^^^^^^ entity.name.tag.vml
+//                ^ punctuation.definition.block.begin.vml
+      color: black;
+    }
+    Screen > Button {
+//  ^^^^^^^^^^^^^^^ entity.name.tag.vml
+//                  ^ punctuation.definition.block.begin.vml
+      color: white;
+    }
+    Button, Label {
+//  ^^^^^^^^^^^^^ entity.name.tag.vml
+//                ^ punctuation.definition.block.begin.vml
+      color: yellow;
+    }
+    Button:first-child {
+//  ^^^^^^^^^^^^^^^^^^ entity.name.tag.vml
+//                     ^ punctuation.definition.block.begin.vml
+      color: orange;
+    }
+    Button:nth-child(2) {
+//  ^^^^^^^^^^^^^^^^^^^ entity.name.tag.vml
+//                      ^ punctuation.definition.block.begin.vml
+      color: purple;
+    }
+    @media (max-width: 600px) {
+//  ^^^^^^^^^^^^^^^^^^^^^^^^^ keyword.control.at-rule.vml
+//                            ^ punctuation.definition.block.begin.vml
+      Button {
+//    ^^^^^^ entity.name.tag.vml
+//           ^ punctuation.definition.block.begin.vml
+        color: pink;
+      }
+    }
+    /* VSS comment */
+//  ^^^^^^^^^^^^^^^^^ comment.block.vss.vml
+    View.card {
+//  ^^^^^^^^^ entity.name.tag.vml
+//            ^ punctuation.definition.block.begin.vml
+      Label.title { color: blue; }
+//    ^^^^^^^^^^^ entity.name.tag.vml
+//                ^ punctuation.definition.block.begin.vml
+//                  ^^^^^ support.type.property-name.vml
+    }
+  }
+}

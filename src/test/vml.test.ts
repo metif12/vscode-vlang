@@ -349,3 +349,187 @@ describe("VML round-2 reviewer fixes", () => {
 		assert.ok(!hover.includes("@brand"))
 	})
 })
+
+describe("VML round-3 reviewer fixes", () => {
+	it("flattens nested rules into descendant selectors", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tView.card {\n\t\t\tbackground: red;\n\t\t\tLabel.title { color: blue; }\n\t\t\tLabel, Button { margin: 1px; }\n\t\t}\n\t}\n\tView {\n\t\tclass: card\n\t\tLabel { class: title }\n\t\tButton { id: plain }\n\t}\n}",
+		)
+		const view = nodes[0]?.children[0]
+		const label = view?.children[0]
+		const button = view?.children[1]
+		assert.ok(view && label && button)
+		assert.deepStrictEqual(
+			collectRules(nodes)
+				.map((rule) => rule.selector)
+				.sort(),
+			["View.card", "View.card Button", "View.card Label", "View.card Label.title"].sort(),
+		)
+		assert.deepStrictEqual(
+			matchingRules(label, collectRules(nodes, label), ancestorsOf(nodes, label)).map(
+				(rule) => rule.selector,
+			),
+			["View.card Label", "View.card Label.title"],
+		)
+		const resolvedLabel = resolvedDeclarations(
+			label,
+			collectRules(nodes, label),
+			ancestorsOf(nodes, label),
+		)
+		assert.strictEqual(resolvedLabel["color"], "blue")
+		assert.strictEqual(resolvedLabel["margin"], "1px")
+		assert.strictEqual(resolvedLabel["background"], undefined)
+		assert.strictEqual(
+			resolvedDeclarations(view, collectRules(nodes, view))["background"],
+			"red",
+		)
+		assert.deepStrictEqual(
+			matchingRules(button, collectRules(nodes, button), ancestorsOf(nodes, button)).map(
+				(rule) => rule.selector,
+			),
+			["View.card Button"],
+		)
+	})
+
+	it("excludes media and container rules from static matching", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tButton { color: red; }\n\t\t@media (max-width: 600px) {\n\t\t\tButton { color: blue; }\n\t\t}\n\t\t@container sidebar (min-width: 300px) {\n\t\t\tButton { color: green; }\n\t\t}\n\t}\n\tButton { id: b }\n}",
+		)
+		const button = nodes[0]?.children[0]
+		assert.ok(button)
+		const rules = collectRules(nodes, button)
+		assert.strictEqual(rules.length, 3)
+		assert.deepStrictEqual(
+			rules.filter((rule) => rule.condition).map((rule) => rule.condition),
+			["@media (max-width: 600px)", "@container sidebar (min-width: 300px)"],
+		)
+		assert.deepStrictEqual(
+			matchingRules(button, rules, ancestorsOf(nodes, button)).map(
+				(rule) => rule.declarations["color"],
+			),
+			["red"],
+		)
+		assert.strictEqual(
+			resolvedDeclarations(button, rules, ancestorsOf(nodes, button))["color"],
+			"red",
+		)
+		const hover = hoverTextFor(button, rules, ancestorsOf(nodes, button))
+		assert.ok(hover.includes("Conditional rules (not applied here):"))
+		assert.ok(hover.includes("@media (max-width: 600px)"))
+		assert.ok(hover.includes("@container sidebar (min-width: 300px)"))
+	})
+
+	it("requires adjacency for child combinators", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tScreen > Button { color: child; }\n\t\tScreen Button { color: descendant; }\n\t}\n\tView {\n\t\tButton { id: deep }\n\t}\n\tButton { id: direct }\n}",
+		)
+		const view = nodes[0]?.children[0]
+		const deep = view?.children[0]
+		const direct = nodes[0]?.children[1]
+		assert.ok(view && deep && direct)
+		assert.deepStrictEqual(
+			matchingRules(direct, collectRules(nodes, direct), ancestorsOf(nodes, direct)).map(
+				(rule) => rule.selector,
+			),
+			["Screen > Button", "Screen Button"],
+		)
+		assert.deepStrictEqual(
+			matchingRules(deep, collectRules(nodes, deep), ancestorsOf(nodes, deep)).map(
+				(rule) => rule.selector,
+			),
+			["Screen Button"],
+		)
+	})
+
+	it("keeps // inside url() values", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tButton { background-image: url(http://example.test/image.png); color: red; } // trailing\n\t}\n\tButton { id: b }\n}",
+		)
+		const button = nodes[0]?.children[0]
+		assert.ok(button)
+		const resolved = resolvedDeclarations(button, collectRules(nodes, button))
+		assert.strictEqual(resolved["background-image"], "url(http://example.test/image.png)")
+		assert.strictEqual(resolved["color"], "red")
+	})
+
+	it("collects grouped selectors as one rule per group", () => {
+		const nodes = parseVml(
+			"Button, Label { color: red; }\nScreen {\n\tStyle {\n\t\tButton, Label { color: blue; }\n\t}\n\tButton { id: b }\n\tLabel { id: l }\n\tView { id: v }\n}",
+		)
+		const screen = nodes[0]
+		const button = screen?.children[0]
+		const label = screen?.children[1]
+		const view = screen?.children[2]
+		assert.ok(screen && button && label && view)
+		const rules = collectRules(nodes, button)
+		assert.deepStrictEqual(
+			rules.map((rule) => rule.selector).sort(),
+			["Button", "Button", "Label", "Label"].sort(),
+		)
+		assert.deepStrictEqual(
+			matchingRules(button, rules, ancestorsOf(nodes, button)).map((rule) => rule.selector),
+			["Button", "Button"],
+		)
+		assert.deepStrictEqual(
+			matchingRules(label, collectRules(nodes, label), ancestorsOf(nodes, label)).map(
+				(rule) => rule.selector,
+			),
+			["Label", "Label"],
+		)
+		assert.deepStrictEqual(matchingRules(view, collectRules(nodes, view)), [])
+	})
+
+	it("applies structural pseudo-classes and keeps dynamic ones conditional", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tButton:first-child { color: first; }\n\t\tButton:nth-child(2) { color: second; }\n\t\tButton:hover { color: hovered; }\n\t}\n\tButton { id: a }\n\tButton { id: b }\n}",
+		)
+		const first = nodes[0]?.children[0]
+		const second = nodes[0]?.children[1]
+		assert.ok(first && second)
+		const firstRules = collectRules(nodes, first)
+		const secondRules = collectRules(nodes, second)
+		assert.deepStrictEqual(
+			matchingRules(first, firstRules, ancestorsOf(nodes, first)).map(
+				(rule) => rule.selector,
+			),
+			["Button:first-child"],
+		)
+		assert.deepStrictEqual(
+			matchingRules(second, secondRules, ancestorsOf(nodes, second)).map(
+				(rule) => rule.selector,
+			),
+			["Button:nth-child(2)"],
+		)
+		assert.strictEqual(resolvedDeclarations(first, firstRules)["color"], "first")
+		assert.strictEqual(
+			resolvedDeclarations(second, secondRules, ancestorsOf(nodes, second))["color"],
+			"second",
+		)
+		const hover = hoverTextFor(second, secondRules, ancestorsOf(nodes, second))
+		assert.ok(hover.includes("Button:nth-child(2)"))
+		assert.ok(hover.includes("State-dependent rules (not applied here):"))
+		assert.ok(hover.includes("Button:hover"))
+		assert.ok(!hover.includes("Button:first-child"))
+	})
+
+	it("matches type selectors case-insensitively", () => {
+		const nodes = parseVml(
+			"Screen {\n\tStyle {\n\t\tbutton { color: low; }\n\t\t.Button { color: classy; }\n\t}\n\tButton { id: b }\n\tButton { id: c class: Button }\n}",
+		)
+		const plain = nodes[0]?.children[0]
+		const classy = nodes[0]?.children[1]
+		assert.ok(plain && classy)
+		assert.deepStrictEqual(
+			matchingRules(plain, collectRules(nodes, plain), ancestorsOf(nodes, plain)).map(
+				(rule) => rule.selector,
+			),
+			["button"],
+		)
+		assert.deepStrictEqual(
+			matchingRules(classy, collectRules(nodes, classy), ancestorsOf(nodes, classy)).map(
+				(rule) => rule.selector,
+			),
+			["button", ".Button"],
+		)
+	})
+})

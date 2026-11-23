@@ -13,8 +13,7 @@ Screen {
 //^^^^^ keyword.control.style.vml
 //      ^ punctuation.definition.block.begin.vml
     Button.action {
-//  ^^^^^^ entity.name.tag.vml
-//        ^^^^^^^ entity.other.attribute-name.class.vml
+//  ^^^^^^^^^^^^^ entity.name.tag.vml
 //                ^ punctuation.definition.block.begin.vml
       background: #3478D4;
 //    ^^^^^^^^^^ support.type.property-name.vml
@@ -26,8 +25,8 @@ Screen {
     }
 //  ^ punctuation.definition.block.end.vml
     Label.count { color: #111827; font-size: 20px; }
-//  ^^^^^ entity.name.tag.vml
-//       ^^^^^^ entity.other.attribute-name.class.vml
+//  ^^^^^^^^^^^ entity.name.tag.vml
+//              ^ punctuation.definition.block.begin.vml
 //                ^^^^^ support.type.property-name.vml
 //                       ^^^^^^^ constant.numeric.color.hex.vml
 //                                ^^^^^^^^^ support.type.property-name.vml
